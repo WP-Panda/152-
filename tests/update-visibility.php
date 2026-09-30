@@ -78,8 +78,19 @@ $GLOBALS['wpdb'] = new TestWpdb();
 $GLOBALS['wpdb']->license_hash = hash('sha256', WP_Panda_Vault::normalize_license_key($license_key));
 require_once dirname(__DIR__) . '/server/wp-panda-vault/includes/class-wp-panda-vault-api.php';
 
+register_shutdown_function(static function () {
+    $error = error_get_last();
+    if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true)) {
+        $message = str_replace(array("\r", "\n", ':', '%'), ' ', $error['message']);
+        echo '::error file=tests/update-visibility.php,line=' . (int) $error['line'] . '::' . $message . "\n";
+    }
+});
+
 function expect($condition, $message) {
-    if (!$condition) throw new RuntimeException($message);
+    if (!$condition) {
+        echo '::error file=tests/update-visibility.php::' . str_replace(array("\r", "\n", ':', '%'), ' ', $message) . "\n";
+        throw new RuntimeException($message);
+    }
 }
 function update_request($key = '') {
     $headers = $key ? array('authorization' => 'Bearer ' . $key) : array();
