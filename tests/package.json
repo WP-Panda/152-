@@ -1,0 +1,6 @@
+{
+  "name": "rcc-frontend-smoke",
+  "private": true,
+  "scripts": {"test": "node frontend-smoke.cjs"},
+  "devDependencies": {"jsdom": "^26.1.0"}
+}

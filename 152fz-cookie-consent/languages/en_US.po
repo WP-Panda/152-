@@ -1,0 +1,290 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en_US\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "152FZ Cookie & Consent Guard"
+msgstr ""
+
+msgid "152ФЗ Cookies"
+msgstr "152FZ Cookies"
+
+msgid "152ФЗ: согласие"
+msgstr "152FZ: consent"
+
+msgid "Google Consent Mode v2"
+msgstr ""
+
+msgid "ID опубликованных страниц (через запятую)"
+msgstr "Published page IDs (comma-separated)"
+
+msgid "URL логотипа"
+msgstr "Logo URL"
+
+msgid "Автоматически добавлять чекбокс в обычные HTML-формы"
+msgstr "Automatically add a checkbox to standard HTML forms"
+
+msgid "Аналитика"
+msgstr "Analytics"
+
+msgid "Анимация"
+msgstr "Animation"
+
+msgid "Баннер"
+msgstr "Banner"
+
+msgid "Включите HTTPS для защиты данных и cookie согласия."
+msgstr "Enable HTTPS to protect data and the consent cookie."
+
+msgid "Внешний вид"
+msgstr "Appearance"
+
+msgid "Выборы по дням (UTC)"
+msgstr "Choices by day (UTC)"
+
+msgid "Выборы посетителей"
+msgstr "Visitor choices"
+
+msgid "Выбрать логотип"
+msgstr "Select logo"
+
+msgid "Дополнительно"
+msgstr "Advanced"
+
+msgid "Дополнительный CSS"
+msgstr "Additional CSS"
+
+msgid "Журнал"
+msgstr "Log"
+
+msgid "Журнал согласий"
+msgstr "Consent log"
+
+msgid "Заголовок"
+msgstr "Heading"
+
+msgid "Задержка, сек."
+msgstr "Delay, seconds"
+
+msgid "Закрыть"
+msgstr "Close"
+
+msgid "Затемнение фона"
+msgstr "Background overlay"
+
+msgid "Импорт и экспорт настроек JSON"
+msgstr "Import and export JSON settings"
+
+msgid "Импорт настроек JSON"
+msgstr "Import JSON settings"
+
+msgid "Импортировать"
+msgstr "Import"
+
+msgid "Интеграции"
+msgstr "Integrations"
+
+msgid "Исключить ID страниц (через запятую)"
+msgstr "Exclude page IDs (comma-separated)"
+
+msgid "Используются для рекламы."
+msgstr "Used for advertising."
+
+msgid "Категории"
+msgstr "Categories"
+
+msgid "Категории: slug|название|описание (по одной в строке)"
+msgstr "Categories: slug, name and description separated by pipes, one per line"
+
+msgid "Категория"
+msgstr "Category"
+
+msgid "Маркетинг"
+msgstr "Marketing"
+
+msgid "Мы используем cookies для работы сайта и, с вашего разрешения, для аналитики и персонализации. Подробнее: {privacy_policy_link}."
+msgstr "We use cookies to operate the site and, with your permission, for analytics and personalization. Learn more: {privacy_policy_link}."
+
+msgid "Найдено"
+msgstr "Found"
+
+msgid "Настройки"
+msgstr "Settings"
+
+msgid "Настройки cookies"
+msgstr "Cookie settings"
+
+msgid "Настройки конфиденциальности"
+msgstr "Privacy settings"
+
+msgid "Не показывать администраторам"
+msgstr "Hide from administrators"
+
+msgid "Не удалось сохранить выбор. Попробуйте снова."
+msgstr "Could not save your choice. Please try again."
+
+msgid "Недопустимый JSON."
+msgstr "Invalid JSON."
+
+msgid "Недостаточно прав."
+msgstr "Insufficient permissions."
+
+msgid "Необходимо согласие на обработку персональных данных."
+msgstr "You must consent to the processing of personal data."
+
+msgid "Необходимые"
+msgstr "Necessary"
+
+msgid "Необходимые всегда включены. Смена категорий обновит версию политики."
+msgstr "Necessary cookies are always enabled. Changing categories updates the policy version."
+
+msgid "Нужны для работы сайта и не отключаются."
+msgstr "Required for the site to work; cannot be disabled."
+
+msgid "Обзор"
+msgstr "Overview"
+
+msgid "Описание ({privacy_policy_link})"
+msgstr "Description ({privacy_policy_link})"
+
+msgid "Отклонить"
+msgstr "Reject"
+
+msgid "Отозвать согласие"
+msgstr "Withdraw consent"
+
+msgid "Перед публикацией настройте политику конфиденциальности WordPress, категории, тексты и проверьте страницы магазина и формы."
+msgstr "Before publishing, set up your WordPress privacy policy, categories and text; test shop pages and forms."
+
+msgid "Плавающая кнопка"
+msgstr "Floating button"
+
+msgid "Поиск cookies"
+msgstr "Search cookies"
+
+msgid "Политика конфиденциальности"
+msgstr "Privacy policy"
+
+msgid "Положение"
+msgstr "Position"
+
+msgid "Помогают улучшить работу сайта."
+msgstr "Help us improve the site."
+
+msgid "Поставщик"
+msgstr "Provider"
+
+msgid "Правила: категория|подстрока URL/id/class (по одному на строку)"
+msgstr "Rules: category, URL/id/class substring separated by a pipe, one per line"
+
+msgid "Принять cookies"
+msgstr "Accept cookies"
+
+msgid "Принять все"
+msgstr "Accept all"
+
+msgid "Проверьте местоположение хранения персональных данных и серверов вашего сайта: плагин не определяет юрисдикцию хостинга."
+msgstr "Check where your site's servers and personal data are located: this plugin cannot identify your hosting jurisdiction."
+
+msgid "Разрешите cookies, чтобы увидеть содержимое."
+msgstr "Allow cookies to view this content."
+
+msgid "Реестр cookies: категория|имя|поставщик|срок|цель (одна строка на cookie)"
+msgstr "Cookie register: category, name, provider, lifetime, purpose separated by pipes (one cookie per line)"
+
+msgid "Режим отладки"
+msgstr "Debug mode"
+
+msgid "Сканер и cookies"
+msgstr "Scanner and cookies"
+
+msgid "Сканирование HTML и заголовков Set-Cookie"
+msgstr "Scan HTML and Set-Cookie headers"
+
+msgid "Сканирование не запускает браузерный JavaScript. Проверьте результаты вручную в браузере без согласия."
+msgstr "The scanner does not run browser JavaScript. Check results in a browser before consenting."
+
+msgid "Сканировать сайт"
+msgstr "Scan site"
+
+msgid "Скругление, px"
+msgstr "Border radius, px"
+
+msgid "Следующая страница"
+msgstr "Next page"
+
+msgid "Сначала выберите настройки cookies."
+msgstr "Choose your cookie preferences first."
+
+msgid "Сначала сохраните реестр, затем запустите сканер ниже."
+msgstr "Save the register before running the scanner below."
+
+msgid "Согласие на cookies"
+msgstr "Cookie consent"
+
+msgid "Сохранить"
+msgstr "Save"
+
+msgid "Сохранить настройки"
+msgstr "Save preferences"
+
+msgid "Сохраняют ваши предпочтения."
+msgstr "Remember your preferences."
+
+msgid "Срок"
+msgstr "Lifetime"
+
+msgid "Срок действия согласия, дни"
+msgstr "Consent validity, days"
+
+msgid "Тексты"
+msgstr "Text"
+
+msgid "Только необходимые"
+msgstr "Necessary only"
+
+msgid "Требовать выбор cookies до отправки формы"
+msgstr "Require cookie choice before submitting a form"
+
+msgid "Файл отсутствует или слишком большой."
+msgstr "File is missing or too large."
+
+msgid "Фильтр"
+msgstr "Filter"
+
+msgid "Фрагмент"
+msgstr "Snippet"
+
+msgid "Функциональные"
+msgstr "Functional"
+
+msgid "Хранить журнал, месяцев"
+msgstr "Log retention, months"
+
+msgid "Цвет кнопки"
+msgstr "Button color"
+
+msgid "Цвет текста"
+msgstr "Text color"
+
+msgid "Цвет текста кнопки"
+msgstr "Button text color"
+
+msgid "Цвет фона"
+msgstr "Background color"
+
+msgid "Цель"
+msgstr "Purpose"
+
+msgid "Ширина, px"
+msgstr "Width, px"
+
+msgid "Экспорт"
+msgstr "Export"
+
+msgid "Экспорт CSV"
+msgstr "Export CSV"
+
+msgid "Я согласен(на) на обработку персональных данных. %s"
+msgstr "I consent to the processing of my personal data. %s"
