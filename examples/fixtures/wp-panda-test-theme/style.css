@@ -1,0 +1,19 @@
+/*
+Theme Name: WP Panda Test Theme
+Theme URI: https://example.invalid/wp-panda-test-theme
+Author: WP Panda
+Description: Минимальная тема для проверки приватных обновлений WP Panda.
+Version: 1.0.0
+Requires at least: 6.0
+Requires PHP: 7.4
+Text Domain: wp-panda-test-theme
+Panda Vault Slug: wp-panda-test-theme
+*/
+
+body {
+    margin: 2rem auto;
+    max-width: 52rem;
+    padding: 0 1rem;
+    color: #263238;
+    font: 16px/1.6 system-ui, sans-serif;
+}

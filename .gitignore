@@ -1,5 +1,6 @@
 .env
 /vendor/
 /wp-panda-vault-private/
+/examples/build/
 *.log
 .DS_Store

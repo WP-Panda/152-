@@ -18,6 +18,8 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
       - name: Check PHP syntax
-        run: find client server tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find client server tests examples/fixtures -type f -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Run update-access regression tests
         run: php tests/update-visibility.php
+      - name: Build test-product packages
+        run: python3 examples/build-fixtures.py
