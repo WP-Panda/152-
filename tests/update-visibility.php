@@ -25,6 +25,7 @@ function wp_parse_url($url, $component = -1) { return parse_url($url, $component
 function rest_url($path = '') { return 'https://vault.example/wp-json/' . ltrim($path, '/'); }
 function add_query_arg($args, $url) { return $url . '?' . http_build_query($args); }
 function current_time($type, $gmt = false) { return '2026-09-30 12:00:00'; }
+function mysql_to_rfc3339($value) { return '2026-09-30T12:00:00+00:00'; }
 
 class WP_Panda_Vault {
     public static function schema_ready() { return true; }
