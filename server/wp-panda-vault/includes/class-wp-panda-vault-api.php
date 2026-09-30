@@ -4,7 +4,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class WP_Panda_Vault_API {
-    const SIGNATURE_TTL = 600;
+    // Longer than WordPress' normal update transient lifetime; revocation is rechecked at download time.
+    const SIGNATURE_TTL = 172800;
 
     public static function register_routes() {
         register_rest_route('wp-panda/v1', '/check', array(
@@ -34,8 +35,10 @@ final class WP_Panda_Vault_API {
             'permission_callback' => array(__CLASS__, 'authorize_download'),
             'args' => array(
                 'id' => array('required' => true, 'sanitize_callback' => 'absint'),
-                'expires' => array('required' => true, 'sanitize_callback' => 'absint'),
-                'signature' => array('required' => true, 'sanitize_callback' => 'sanitize_text_field'),
+                'expires' => array('required' => false, 'sanitize_callback' => 'absint'),
+                'license_id' => array('required' => false, 'sanitize_callback' => 'absint'),
+                'site_hash' => array('required' => false, 'sanitize_callback' => 'sanitize_text_field'),
+                'signature' => array('required' => false, 'sanitize_callback' => 'sanitize_text_field'),
             ),
         ));
     }
@@ -85,6 +88,7 @@ final class WP_Panda_Vault_API {
 
     public static function activate_license($request) {
         nocache_headers();
+        if (!WP_Panda_Vault::schema_ready()) return new WP_Error('database_unavailable', __('License service is temporarily unavailable.', 'wp-panda-vault'), array('status' => 503));
         $payload = self::request_payload($request);
         $credentials = self::get_product_and_license($payload['slug'] ?? '', $payload['type'] ?? '', $payload['license_key'] ?? '', true);
         if (is_wp_error($credentials)) return $credentials;
@@ -95,21 +99,44 @@ final class WP_Panda_Vault_API {
         global $wpdb;
         $licenses_table = WP_Panda_Vault::licenses_table();
         $activations_table = WP_Panda_Vault::activations_table();
-        // Lock the license row to prevent simultaneous activation requests oversubscribing the slot limit.
-        $wpdb->query('START TRANSACTION');
+        // InnoDB row locking prevents simultaneous requests from oversubscribing slots.
+        $wpdb->last_error = '';
+        if ($wpdb->query('START TRANSACTION') === false) {
+            return new WP_Error('database_error', __('Could not start a license activation transaction.', 'wp-panda-vault'), array('status' => 500));
+        }
         $locked = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$licenses_table} WHERE id = %d FOR UPDATE", $license->id));
-        if (!$locked || $locked->status !== 'active') {
+        if (!$locked) {
+            $database_error = (string) $wpdb->last_error;
+            $wpdb->query('ROLLBACK');
+            if ($database_error !== '') return new WP_Error('database_error', __('Could not read the license record.', 'wp-panda-vault'), array('status' => 500));
+            return new WP_Error('invalid_license', __('License is not active.', 'wp-panda-vault'), array('status' => 403));
+        }
+        if ($locked->status !== 'active') {
             $wpdb->query('ROLLBACK');
             return new WP_Error('invalid_license', __('License is not active.', 'wp-panda-vault'), array('status' => 403));
         }
         $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$activations_table} WHERE license_id = %d AND site_hash = %s", $license->id, $site['hash']));
+        if ($wpdb->last_error !== '') {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('database_error', __('Could not read the site activation.', 'wp-panda-vault'), array('status' => 500));
+        }
         if ($existing) {
-            $wpdb->update($activations_table, array('site_url' => $site['url'], 'last_seen_at' => current_time('mysql', true)), array('id' => $existing->id), array('%s', '%s'), array('%d'));
-        } else {
-            $count = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$activations_table} WHERE license_id = %d", $license->id));
-            if ($count >= (int) $license->max_activations) {
+            $updated = $wpdb->update($activations_table, array('site_url' => $site['url'], 'last_seen_at' => current_time('mysql', true)), array('id' => $existing->id), array('%s', '%s'), array('%d'));
+            if ($updated === false) {
                 $wpdb->query('ROLLBACK');
-                return new WP_Error('activation_limit_reached', sprintf(__('This license is already active on %1$d of %2$d allowed sites. Deactivate an old site or contact the license owner.', 'wp-panda-vault'), $count, (int) $license->max_activations), array('status' => 409, 'activations' => $count, 'limit' => (int) $license->max_activations));
+                return new WP_Error('database_error', __('Could not update the site activation.', 'wp-panda-vault'), array('status' => 500));
+            }
+        } else {
+            $wpdb->last_error = '';
+            $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$activations_table} WHERE license_id = %d", $license->id));
+            if ($wpdb->last_error !== '') {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('database_error', __('Could not count license activations.', 'wp-panda-vault'), array('status' => 500));
+            }
+            $count = (int) $count;
+            if ($count >= (int) $locked->max_activations) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('activation_limit_reached', sprintf(__('This license is already active on %1$d of %2$d allowed sites. Deactivate an old site or contact the license owner.', 'wp-panda-vault'), $count, (int) $locked->max_activations), array('status' => 409, 'activations' => $count, 'limit' => (int) $locked->max_activations));
             }
             $inserted = $wpdb->insert($activations_table, array(
                 'license_id' => $license->id,
@@ -120,16 +147,29 @@ final class WP_Panda_Vault_API {
             ), array('%d', '%s', '%s', '%s', '%s'));
             if (!$inserted) {
                 $wpdb->query('ROLLBACK');
-                return new WP_Error('activation_failed', __('Could not register this site activation.', 'wp-panda-vault'), array('status' => 500));
+                return new WP_Error('database_error', __('Could not register this site activation.', 'wp-panda-vault'), array('status' => 500));
             }
+            $count++;
         }
-        $wpdb->query('COMMIT');
-        $count = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$activations_table} WHERE license_id = %d", $license->id));
-        return rest_ensure_response(array('activated' => true, 'product' => $product->slug, 'activations' => $count, 'limit' => (int) $license->max_activations));
+        if ($existing) {
+            $wpdb->last_error = '';
+            $count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$activations_table} WHERE license_id = %d", $license->id));
+            if ($wpdb->last_error !== '') {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('database_error', __('Could not count license activations.', 'wp-panda-vault'), array('status' => 500));
+            }
+            $count = (int) $count;
+        }
+        if ($wpdb->query('COMMIT') === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('database_error', __('Could not commit the license activation.', 'wp-panda-vault'), array('status' => 500));
+        }
+        return rest_ensure_response(array('activated' => true, 'product' => $product->slug, 'activations' => $count, 'limit' => (int) $locked->max_activations));
     }
 
     public static function deactivate_license($request) {
         nocache_headers();
+        if (!WP_Panda_Vault::schema_ready()) return new WP_Error('database_unavailable', __('License service is temporarily unavailable.', 'wp-panda-vault'), array('status' => 503));
         $payload = self::request_payload($request);
         // A revoked license may still remove its own activation record and release a seat.
         $credentials = self::get_product_and_license($payload['slug'] ?? '', $payload['type'] ?? '', $payload['license_key'] ?? '', false);
@@ -138,7 +178,8 @@ final class WP_Panda_Vault_API {
         $site = self::site_identity($payload['site_url'] ?? '');
         if (is_wp_error($site)) return $site;
         global $wpdb;
-        $wpdb->delete(WP_Panda_Vault::activations_table(), array('license_id' => $license->id, 'site_hash' => $site['hash']), array('%d', '%s'));
+        $deleted = $wpdb->delete(WP_Panda_Vault::activations_table(), array('license_id' => $license->id, 'site_hash' => $site['hash']), array('%d', '%s'));
+        if ($deleted === false) return new WP_Error('database_error', __('Could not remove the site activation.', 'wp-panda-vault'), array('status' => 500));
         return rest_ensure_response(array('deactivated' => true, 'product' => $product->slug));
     }
 
@@ -151,25 +192,54 @@ final class WP_Panda_Vault_API {
 
     public static function check_update($request) {
         nocache_headers();
+        if (!WP_Panda_Vault::schema_ready()) return new WP_Error('database_unavailable', __('Update service is temporarily unavailable.', 'wp-panda-vault'), array('status' => 503));
         $slug = sanitize_key($request->get_param('slug'));
         $type = sanitize_key($request->get_param('type'));
         $installed = sanitize_text_field($request->get_param('version'));
-        $credentials = self::get_product_and_license($slug, $type, self::bearer_token($request), true);
-        if (is_wp_error($credentials)) return $credentials;
-        list($product, $license) = $credentials;
-        $site = self::site_identity($request->get_param('site_url'));
-        if (is_wp_error($site)) return $site;
-        global $wpdb;
-        $activation = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . WP_Panda_Vault::activations_table() . ' WHERE license_id = %d AND site_hash = %s', $license->id, $site['hash']));
-        if (!$activation) {
-            return new WP_Error('site_not_activated', __('This site is not activated for this license. Activate it in WordPress Settings → Panda Updates.', 'wp-panda-vault'), array('status' => 403));
-        }
-        $wpdb->update(WP_Panda_Vault::activations_table(), array('site_url' => $site['url'], 'last_seen_at' => current_time('mysql', true)), array('id' => $activation->id), array('%s', '%s'), array('%d'));
+        $product = WP_Panda_Vault::find_product($slug, $type);
+        if (!$product) return new WP_Error('product_not_found', __('Product not found.', 'wp-panda-vault'), array('status' => 404));
         $release = WP_Panda_Vault::latest_release($product->id);
         if (!$release || version_compare($release->version, $installed, '<=')) return rest_ensure_response(array('update' => false));
-        $expires = time() + self::SIGNATURE_TTL;
-        $signature = self::sign_download($release->id, $expires);
-        $package = add_query_arg(array('expires' => $expires, 'signature' => $signature), rest_url('wp-panda/v1/download/' . absint($release->id)));
+
+        // Update metadata is intentionally public so WordPress can show that a new
+        // release exists. Without an active license/site activation, package only
+        // points to the guarded route and cannot be downloaded.
+        $package = rest_url('wp-panda/v1/download/' . absint($release->id));
+        $license_id = 0;
+        $site_hash = '';
+        $credentials = self::get_product_and_license($slug, $type, self::bearer_token($request), true);
+        if (!is_wp_error($credentials)) {
+            list($licensed_product, $license) = $credentials;
+            $site = self::site_identity($request->get_param('site_url'));
+            if (!is_wp_error($site) && (int) $licensed_product->id === (int) $product->id) {
+                global $wpdb;
+                $activation = $wpdb->get_row($wpdb->prepare(
+                    'SELECT id FROM ' . WP_Panda_Vault::activations_table() . ' WHERE license_id = %d AND site_hash = %s',
+                    $license->id,
+                    $site['hash']
+                ));
+                if ($activation) {
+                    $wpdb->update(
+                        WP_Panda_Vault::activations_table(),
+                        array('site_url' => $site['url'], 'last_seen_at' => current_time('mysql', true)),
+                        array('id' => $activation->id),
+                        array('%s', '%s'),
+                        array('%d')
+                    );
+                    $license_id = (int) $license->id;
+                    $site_hash = $site['hash'];
+                    $expires = time() + self::SIGNATURE_TTL;
+                    $signature = self::sign_download($release->id, $expires, $license_id, $site_hash);
+                    $package = add_query_arg(array(
+                        'expires' => $expires,
+                        'license_id' => $license_id,
+                        'site_hash' => $site_hash,
+                        'signature' => $signature,
+                    ), $package);
+                }
+            }
+        }
+
         return rest_ensure_response(array(
             'update' => true,
             'slug' => $product->slug,
@@ -190,19 +260,48 @@ final class WP_Panda_Vault_API {
         return wp_salt('auth');
     }
 
-    private static function sign_download($release_id, $expires) {
-        return hash_hmac('sha256', absint($release_id) . ':' . absint($expires), self::signing_secret());
+    private static function sign_download($release_id, $expires, $license_id, $site_hash) {
+        $message = absint($release_id) . ':' . absint($license_id) . ':' . strtolower((string) $site_hash) . ':' . absint($expires);
+        return hash_hmac('sha256', $message, self::signing_secret());
+    }
+
+    private static function download_entitlement($release_id, $license_id, $site_hash) {
+        global $wpdb;
+        $release = $wpdb->get_row($wpdb->prepare(
+            'SELECT id, product_id FROM ' . WP_Panda_Vault::releases_table() . ' WHERE id = %d',
+            absint($release_id)
+        ));
+        if (!$release) return false;
+        $license = $wpdb->get_row($wpdb->prepare(
+            'SELECT id FROM ' . WP_Panda_Vault::licenses_table() . ' WHERE id = %d AND product_id = %d AND status = %s',
+            absint($license_id),
+            (int) $release->product_id,
+            'active'
+        ));
+        if (!$license) return false;
+        $activation = $wpdb->get_var($wpdb->prepare(
+            'SELECT id FROM ' . WP_Panda_Vault::activations_table() . ' WHERE license_id = %d AND site_hash = %s',
+            (int) $license->id,
+            strtolower((string) $site_hash)
+        ));
+        return (bool) $activation;
     }
 
     public static function authorize_download($request) {
+        if (!WP_Panda_Vault::schema_ready()) return new WP_Error('database_unavailable', __('Download service is temporarily unavailable.', 'wp-panda-vault'), array('status' => 503));
         $release_id = absint($request->get_param('id'));
         $expires = absint($request->get_param('expires'));
+        $license_id = absint($request->get_param('license_id'));
+        $site_hash = strtolower(sanitize_text_field($request->get_param('site_hash')));
         $signature = sanitize_text_field($request->get_param('signature'));
-        if (!$release_id || $expires < time() || $expires > time() + self::SIGNATURE_TTL + 30 || !$signature) {
+        if (!$release_id || !$expires || !$license_id || !preg_match('/^[a-f0-9]{64}$/', $site_hash) || !preg_match('/^[a-f0-9]{64}$/', $signature)) {
+            return new WP_Error('license_required', __('A valid activated license is required to download this update.', 'wp-panda-vault'), array('status' => 403));
+        }
+        if ($expires < time() || $expires > time() + self::SIGNATURE_TTL + 30 || !hash_equals(self::sign_download($release_id, $expires, $license_id, $site_hash), $signature)) {
             return new WP_Error('invalid_download_link', __('Download link is invalid or expired.', 'wp-panda-vault'), array('status' => 403));
         }
-        if (!hash_equals(self::sign_download($release_id, $expires), $signature)) {
-            return new WP_Error('invalid_download_link', __('Download link is invalid or expired.', 'wp-panda-vault'), array('status' => 403));
+        if (!self::download_entitlement($release_id, $license_id, $site_hash)) {
+            return new WP_Error('license_required', __('The license is no longer active for this site.', 'wp-panda-vault'), array('status' => 403));
         }
         return true;
     }

@@ -20,7 +20,6 @@ if (!class_exists('WP_Panda_Updater', false)) {
         private $api_url;
         private $plugin_file;
         private $option_name;
-        private $cache_key;
         private $settings_page;
         private $settings_parent;
 
@@ -34,7 +33,6 @@ if (!class_exists('WP_Panda_Updater', false)) {
             $this->settings_page = !empty($args['settings_page']) ? (is_string($args['settings_page']) ? sanitize_key($args['settings_page']) : true) : false;
             $this->settings_parent = isset($args['settings_parent']) ? sanitize_key($args['settings_parent']) : '';
             $this->option_name = 'wp_panda_license_' . md5($this->type . ':' . $this->slug);
-            $this->cache_key = 'wp_panda_vault_' . md5($this->type . ':' . $this->slug . ':' . $this->version);
 
             if (!in_array($this->type, array('plugin', 'theme'), true) || !$this->slug || !$this->api_url) return;
             if (wp_parse_url($this->api_url, PHP_URL_SCHEME) !== 'https' && !(defined('WP_PANDA_ALLOW_INSECURE_API') && WP_PANDA_ALLOW_INSECURE_API)) return;
@@ -72,9 +70,14 @@ if (!class_exists('WP_Panda_Updater', false)) {
             return trim((string) get_option($this->option_name, ''));
         }
 
+        private function update_cache_key() {
+            // Keep public metadata and signed package URLs isolated by the current key.
+            return 'wp_panda_vault_' . md5($this->type . ':' . $this->slug . ':' . $this->version . ':' . hash('sha256', $this->license_key()));
+        }
+
         private function check_for_update() {
-            if (!$this->license_key()) return array('update' => false);
-            $cached = get_transient($this->cache_key);
+            $cache_key = $this->update_cache_key();
+            $cached = get_transient($cache_key);
             if (is_array($cached)) return $cached;
             $endpoint = add_query_arg(array(
                 'slug' => $this->slug,
@@ -84,21 +87,22 @@ if (!class_exists('WP_Panda_Updater', false)) {
             ), trailingslashit($this->api_url) . 'check');
             $response = wp_remote_get($endpoint, array(
                 'timeout' => 12,
-                'redirection' => 2,
+                // Never forward a license Bearer token through an HTTP redirect.
+                'redirection' => 0,
                 'sslverify' => true,
-                'headers' => array(
+                'headers' => $this->license_key() ? array(
                     'Accept' => 'application/json',
                     'Authorization' => 'Bearer ' . $this->license_key(),
-                ),
+                ) : array('Accept' => 'application/json'),
                 'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url('/'),
             ));
             if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) {
-                set_transient($this->cache_key, array('update' => false), 5 * MINUTE_IN_SECONDS);
+                set_transient($cache_key, array('update' => false), 5 * MINUTE_IN_SECONDS);
                 return array('update' => false);
             }
             $data = json_decode(wp_remote_retrieve_body($response), true);
             if (!is_array($data) || empty($data['update']) || empty($data['version']) || empty($data['package'])) $data = array('update' => false);
-            set_transient($this->cache_key, $data, 5 * MINUTE_IN_SECONDS);
+            set_transient($cache_key, $data, 5 * MINUTE_IN_SECONDS);
             return $data;
         }
 
@@ -233,7 +237,7 @@ if (!class_exists('WP_Panda_Updater', false)) {
 
             if ($action === 'forget') {
                 delete_option($instance->option_name);
-                delete_transient($instance->cache_key);
+                delete_transient($instance->update_cache_key());
                 wp_send_json_success(array('message' => __('Ключ удалён локально. Если сервер не получил деактивацию, освободите слот в панели Vault.', 'wp-panda-updater')));
             }
             if ($action === 'activate') {
@@ -248,7 +252,7 @@ if (!class_exists('WP_Panda_Updater', false)) {
                 $new_normalized = strtoupper(preg_replace('/[^A-Z0-9]/', '', $new_key));
                 if ($old_key && !hash_equals($old_normalized, $new_normalized)) $instance->license_request('deactivate', $old_key);
                 update_option($instance->option_name, $new_key, false);
-                delete_transient($instance->cache_key);
+                delete_transient($instance->update_cache_key());
                 $body = json_decode(wp_remote_retrieve_body($response), true);
                 $message = sprintf(__('Лицензия активирована: %1$d из %2$d сайтов.', 'wp-panda-updater'), absint($body['activations'] ?? 1), absint($body['limit'] ?? 1));
                 wp_send_json_success(array('message' => $message));
@@ -262,7 +266,7 @@ if (!class_exists('WP_Panda_Updater', false)) {
                     wp_send_json_error(array('message' => self::response_error($response)), $code >= 400 && $code < 600 ? $code : 502);
                 }
                 delete_option($instance->option_name);
-                delete_transient($instance->cache_key);
+                delete_transient($instance->update_cache_key());
                 wp_send_json_success(array('message' => __('Сайт деактивирован, слот освобождён.', 'wp-panda-updater')));
             }
             wp_send_json_error(array('message' => __('Неизвестное действие.', 'wp-panda-updater')), 400);

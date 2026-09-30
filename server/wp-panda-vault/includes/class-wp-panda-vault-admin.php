@@ -255,10 +255,36 @@ final class WP_Panda_Vault_Admin {
         $zip = new ZipArchive();
         $opened = $zip->open($file, ZipArchive::CHECKCONS);
         if ($opened !== true) return new WP_Error('invalid_zip', __('ZIP повреждён или не может быть открыт.', 'wp-panda-vault'));
+        $max_entries = 20000;
+        $max_total_uncompressed = 1024 * 1024 * 1024;
+        $max_single_uncompressed = 256 * 1024 * 1024;
+        $max_compression_ratio = 1000;
+        if ($zip->numFiles < 1 || $zip->numFiles > $max_entries) {
+            $zip->close();
+            return new WP_Error('zip_entry_limit', __('ZIP contains too many entries or is empty.', 'wp-panda-vault'));
+        }
         $has_entry = false;
         $has_main = false;
         $version_matches = false;
+        $total_uncompressed = 0;
+        $seen_entries = array();
         for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if (!is_array($stat) || !isset($stat['size'], $stat['comp_size'])) {
+                $zip->close();
+                return new WP_Error('zip_entry_invalid', __('ZIP contains an unreadable entry.', 'wp-panda-vault'));
+            }
+            $entry_size = (int) $stat['size'];
+            $compressed_size = (int) $stat['comp_size'];
+            if ($entry_size < 0 || $compressed_size < 0 || $entry_size > $max_single_uncompressed) {
+                $zip->close();
+                return new WP_Error('zip_entry_size', __('A ZIP entry exceeds the allowed uncompressed size.', 'wp-panda-vault'));
+            }
+            $total_uncompressed += $entry_size;
+            if ($total_uncompressed > $max_total_uncompressed || ($entry_size > 1024 * 1024 && ($compressed_size === 0 || $entry_size / $compressed_size > $max_compression_ratio))) {
+                $zip->close();
+                return new WP_Error('zip_expansion_limit', __('ZIP exceeds the allowed total size or compression ratio.', 'wp-panda-vault'));
+            }
             $entry = $zip->getNameIndex($i);
             if (!is_string($entry) || strpos($entry, "\0") !== false) continue;
             $opsys = 0;
@@ -274,6 +300,12 @@ final class WP_Panda_Vault_Admin {
                 $zip->close();
                 return new WP_Error('invalid_zip_structure', sprintf(__('Внутри ZIP все файлы должны находиться в каталоге %s/; архивы с путями traversal запрещены.', 'wp-panda-vault'), $slug));
             }
+            $entry_identity = strtolower(trim($entry, '/'));
+            if (isset($seen_entries[$entry_identity])) {
+                $zip->close();
+                return new WP_Error('duplicate_zip_entry', __('ZIP contains duplicate or case-colliding paths.', 'wp-panda-vault'));
+            }
+            $seen_entries[$entry_identity] = true;
             $has_entry = true;
             $is_theme_style = count($parts) === 2 && $type === 'theme' && strtolower($parts[1]) === 'style.css';
             $is_plugin_php = count($parts) === 2 && $type === 'plugin' && strtolower(pathinfo($parts[1], PATHINFO_EXTENSION)) === 'php';
@@ -380,7 +412,7 @@ final class WP_Panda_Vault_Admin {
         check_admin_referer('wppv_revoke_license_' . $license_id);
         global $wpdb;
         $updated = $wpdb->update(WP_Panda_Vault::licenses_table(), array('status' => 'revoked'), array('id' => $license_id, 'product_id' => $product_id), array('%s'), array('%d', '%d'));
-        if ($updated === false) $this->redirect_error(__('Не удалось отозвать лицензию.', 'wp-panda-vault'), $product_id);
+        if ($updated === false || $updated < 1) $this->redirect_error(__('Лицензия не найдена или не удалось её отозвать.', 'wp-panda-vault'), $product_id);
         wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $product_id, 'notice' => 'license_revoked'), admin_url('admin.php')));
         exit;
     }
@@ -392,7 +424,8 @@ final class WP_Panda_Vault_Admin {
         $activation_id = absint($_POST['activation_id'] ?? 0);
         check_admin_referer('wppv_remove_activation_' . $activation_id);
         global $wpdb;
-        $wpdb->delete(WP_Panda_Vault::activations_table(), array('id' => $activation_id, 'license_id' => $license_id), array('%d', '%d'));
+        $deleted = $wpdb->delete(WP_Panda_Vault::activations_table(), array('id' => $activation_id, 'license_id' => $license_id), array('%d', '%d'));
+        if ($deleted === false || $deleted < 1) $this->redirect_error(__('The activation could not be found or removed.', 'wp-panda-vault'), $product_id);
         wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $product_id, 'notice' => 'activation_removed'), admin_url('admin.php')));
         exit;
     }
@@ -404,15 +437,28 @@ final class WP_Panda_Vault_Admin {
         global $wpdb;
         $product = WP_Panda_Vault::get_product($id);
         if (!$product) $this->redirect_error(__('Продукт не найден.', 'wp-panda-vault'));
+        $wpdb->last_error = '';
         $releases = WP_Panda_Vault::get_releases($id);
+        if ($wpdb->last_error !== '') $this->redirect_error(__('Could not load product releases; nothing was deleted.', 'wp-panda-vault'), $id);
+        $wpdb->last_error = '';
         $licenses = WP_Panda_Vault::get_licenses($id);
+        if ($wpdb->last_error !== '') $this->redirect_error(__('Could not load product licenses; nothing was deleted.', 'wp-panda-vault'), $id);
+        if ($wpdb->query('START TRANSACTION') === false) $this->redirect_error(__('Could not start the product deletion transaction.', 'wp-panda-vault'), $id);
+        $failed = false;
         foreach ($licenses as $license) {
-            $wpdb->delete(WP_Panda_Vault::activations_table(), array('license_id' => $license->id), array('%d'));
+            if ($wpdb->delete(WP_Panda_Vault::activations_table(), array('license_id' => $license->id), array('%d')) === false) { $failed = true; break; }
         }
-        $wpdb->delete(WP_Panda_Vault::licenses_table(), array('product_id' => $id), array('%d'));
-        $deleted_releases = $wpdb->delete(WP_Panda_Vault::releases_table(), array('product_id' => $id), array('%d'));
-        $deleted_product = $wpdb->delete(WP_Panda_Vault::products_table(), array('id' => $id), array('%d'));
-        if ($deleted_releases === false || $deleted_product === false) $this->redirect_error(__('Database error while deleting product; package files were retained.', 'wp-panda-vault'));
+        if (!$failed && $wpdb->delete(WP_Panda_Vault::licenses_table(), array('product_id' => $id), array('%d')) === false) $failed = true;
+        if (!$failed && $wpdb->delete(WP_Panda_Vault::releases_table(), array('product_id' => $id), array('%d')) === false) $failed = true;
+        if (!$failed && $wpdb->delete(WP_Panda_Vault::products_table(), array('id' => $id), array('%d')) !== 1) $failed = true;
+        if ($failed) {
+            $wpdb->query('ROLLBACK');
+            $this->redirect_error(__('Database error while deleting product; no package files were removed.', 'wp-panda-vault'), $id);
+        }
+        if ($wpdb->query('COMMIT') === false) {
+            $wpdb->query('ROLLBACK');
+            $this->redirect_error(__('Could not commit product deletion; package files were retained.', 'wp-panda-vault'), $id);
+        }
         foreach ($releases as $release) {
             if (WP_Panda_Vault::is_path_in_storage($release->package_path)) @unlink($release->package_path);
         }
