@@ -1,0 +1,16 @@
+services:
+  update-vault:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /var/lib/wp-panda
+      HOST: 0.0.0.0
+    volumes:
+      - update-vault-data:/var/lib/wp-panda
+    expose:
+      - "3000"
+    # Publish only behind a TLS reverse proxy. Do not expose this port directly.
+
+volumes:
+  update-vault-data:
