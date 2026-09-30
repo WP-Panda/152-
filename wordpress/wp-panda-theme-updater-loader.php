@@ -1,8 +1,9 @@
 <?php
 /**
- * Optional MU-plugin loader for updates to active AND inactive themes.
- * Install this file and wp-panda-updater.php directly in wp-content/mu-plugins/.
- * Configure WP_PANDA_VAULT_API_URL and per-theme key constants in wp-config.php.
+ * Optional MU-plugin loader for active and inactive WP Panda themes.
+ * Copy this file and wp-panda-updater.php to wp-content/mu-plugins/.
+ * Add "Panda Vault Slug: your-theme-slug" to the theme style.css and define
+ * WP_PANDA_VAULT_API_URL in wp-config.php.
  */
 if (!defined('ABSPATH')) {
     exit;
@@ -15,16 +16,17 @@ if (!is_readable($client_sdk) || !defined('WP_PANDA_VAULT_API_URL')) {
 require_once $client_sdk;
 
 foreach (wp_get_themes() as $stylesheet => $theme) {
-    $constant = 'WP_PANDA_' . strtoupper(preg_replace('/[^A-Z0-9]+/i', '_', $stylesheet)) . '_KEY';
-    if (!defined($constant)) {
-        continue;
-    }
+    $style_file = $theme->get_stylesheet_directory() . '/style.css';
+    if (!is_readable($style_file)) continue;
+    $header = file_get_contents($style_file, false, null, 0, 8192);
+    if (!is_string($header) || !preg_match('/^[ \t\/*#@]*Panda Vault Slug:\s*([a-z0-9_-]+)\s*$/mi', $header, $matches)) continue;
+    $slug = sanitize_key($matches[1]);
+    if ($slug !== $stylesheet) continue;
     new WP_Panda_Updater(array(
         'type' => 'theme',
-        'slug' => $stylesheet,
+        'slug' => $slug,
+        'name' => $theme->get('Name'),
         'version' => $theme->get('Version'),
-        'api_key_constant' => $constant,
         'api_url' => WP_PANDA_VAULT_API_URL,
-        'theme' => $theme,
     ));
 }

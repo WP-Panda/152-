@@ -4,7 +4,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class WP_Panda_Vault {
-    const DB_VERSION = '1.0.0';
+    const DB_VERSION = '1.1.0';
     private static $instance;
 
     public static function instance() {
@@ -31,6 +31,16 @@ final class WP_Panda_Vault {
         return $wpdb->prefix . 'panda_vault_releases';
     }
 
+    public static function licenses_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'panda_vault_licenses';
+    }
+
+    public static function activations_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'panda_vault_activations';
+    }
+
     private static function install_schema() {
         global $wpdb;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -42,7 +52,7 @@ final class WP_Panda_Vault {
             name varchar(191) NOT NULL,
             slug varchar(60) NOT NULL,
             type varchar(12) NOT NULL,
-            api_key_hash char(64) NOT NULL,
+            api_key_hash char(64) NOT NULL DEFAULT '',
             status varchar(12) NOT NULL DEFAULT 'active',
             created_at datetime NOT NULL,
             PRIMARY KEY  (id),
@@ -67,6 +77,35 @@ final class WP_Panda_Vault {
             KEY product_id (product_id),
             KEY created_at (created_at)
         ) {$charset};");
+        $licenses = self::licenses_table();
+        dbDelta("CREATE TABLE {$licenses} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            product_id bigint(20) unsigned NOT NULL,
+            license_key_hash char(64) NOT NULL,
+            label varchar(191) NOT NULL DEFAULT '',
+            max_activations tinyint(3) unsigned NOT NULL DEFAULT 1,
+            status varchar(12) NOT NULL DEFAULT 'active',
+            created_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY product_license (product_id,license_key_hash),
+            KEY product_id (product_id),
+            KEY status (status)
+        ) {$charset};");
+        $activations = self::activations_table();
+        dbDelta("CREATE TABLE {$activations} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            license_id bigint(20) unsigned NOT NULL,
+            site_hash char(64) NOT NULL,
+            site_url varchar(255) NOT NULL,
+            activated_at datetime NOT NULL,
+            last_seen_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY license_site (license_id,site_hash),
+            KEY license_id (license_id),
+            KEY site_hash (site_hash)
+        ) {$charset};");
+        // Revoke credentials from the earlier shared-product-key implementation.
+        $wpdb->query("UPDATE {$products} SET api_key_hash = '' WHERE api_key_hash <> ''");
         update_option('wp_panda_vault_db_version', self::DB_VERSION, false);
     }
 
@@ -148,12 +187,22 @@ final class WP_Panda_Vault {
         return $latest;
     }
 
-    public static function create_api_key() {
+    public static function get_licenses($product_id) {
+        global $wpdb;
+        return (array) $wpdb->get_results($wpdb->prepare('SELECT * FROM ' . self::licenses_table() . ' WHERE product_id = %d ORDER BY created_at DESC, id DESC', absint($product_id)));
+    }
+
+    public static function create_license_key() {
         try {
-            return 'wppv_' . bin2hex(random_bytes(32));
+            $hex = strtoupper(bin2hex(random_bytes(20)));
+            return 'WPPV-' . implode('-', str_split($hex, 4));
         } catch (Exception $e) {
-            return new WP_Error('random_failed', __('Could not generate a cryptographically secure product key.', 'wp-panda-vault'));
+            return new WP_Error('random_failed', __('Could not generate a cryptographically secure license key.', 'wp-panda-vault'));
         }
+    }
+
+    public static function normalize_license_key($key) {
+        return preg_replace('/[^A-Z0-9]/', '', strtoupper((string) $key));
     }
 
     public static function is_path_in_storage($file) {

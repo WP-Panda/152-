@@ -16,7 +16,9 @@ final class WP_Panda_Vault_Admin {
         add_action('admin_menu', array($this, 'add_menu'));
         add_action('admin_post_wp_panda_vault_create', array($this, 'create_product'));
         add_action('admin_post_wp_panda_vault_upload', array($this, 'upload_release'));
-        add_action('admin_post_wp_panda_vault_rotate', array($this, 'rotate_key'));
+        add_action('admin_post_wp_panda_vault_create_license', array($this, 'create_license'));
+        add_action('admin_post_wp_panda_vault_revoke_license', array($this, 'revoke_license'));
+        add_action('admin_post_wp_panda_vault_remove_activation', array($this, 'remove_activation'));
         add_action('admin_post_wp_panda_vault_delete', array($this, 'delete_product'));
         add_action('admin_notices', array($this, 'storage_notice'));
         add_action('admin_enqueue_scripts', array($this, 'admin_styles'));
@@ -54,10 +56,10 @@ final class WP_Panda_Vault_Admin {
         $product_id = isset($_GET['product_id']) ? absint($_GET['product_id']) : 0;
         echo '<div class="wrap wppv-wrap"><h1>WP Panda Vault</h1>';
         $this->render_notice();
-        $key_notice = get_transient('wppv_key_' . get_current_user_id());
-        if (is_array($key_notice) && !empty($key_notice['key']) && absint($key_notice['product_id'] ?? 0) === $product_id) {
-            delete_transient('wppv_key_' . get_current_user_id());
-            echo '<div class="notice notice-success"><p><strong>' . esc_html__('Скопируйте ключ сейчас — повторно он не показывается.', 'wp-panda-vault') . '</strong></p><p class="wppv-key">' . esc_html($key_notice['key']) . '</p></div>';
+        $license_notice = get_transient('wppv_license_' . get_current_user_id());
+        if (is_array($license_notice) && !empty($license_notice['key']) && absint($license_notice['product_id'] ?? 0) === $product_id) {
+            delete_transient('wppv_license_' . get_current_user_id());
+            echo '<div class="notice notice-success"><p><strong>' . esc_html__('Скопируйте индивидуальный лицензионный ключ сейчас — повторно он не показывается.', 'wp-panda-vault') . '</strong></p><p class="wppv-key">' . esc_html($license_notice['key']) . '</p></div>';
         }
         if ($product_id) {
             $product = WP_Panda_Vault::get_product($product_id);
@@ -76,8 +78,10 @@ final class WP_Panda_Vault_Admin {
         $messages = array(
             'created' => __('Продукт создан.', 'wp-panda-vault'),
             'release' => __('Релиз опубликован.', 'wp-panda-vault'),
-            'rotated' => __('Ключ заменён. Старый ключ больше не работает.', 'wp-panda-vault'),
-            'deleted' => __('Продукт и его релизы удалены.', 'wp-panda-vault'),
+            'license_created' => __('Индивидуальная лицензия создана.', 'wp-panda-vault'),
+            'license_revoked' => __('Лицензия отозвана.', 'wp-panda-vault'),
+            'activation_removed' => __('Активация удалена, слот освобождён.', 'wp-panda-vault'),
+            'deleted' => __('Продукт, лицензии и релизы удалены.', 'wp-panda-vault'),
         );
         $key = isset($_GET['notice']) ? sanitize_key($_GET['notice']) : '';
         if (isset($messages[$key])) echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($messages[$key]) . '</p></div>';
@@ -115,7 +119,7 @@ final class WP_Panda_Vault_Admin {
         echo '<p><label for="wppv-type"><strong>' . esc_html__('Тип продукта', 'wp-panda-vault') . '</strong></label><br><select id="wppv-type" name="type"><option value="plugin">' . esc_html__('Плагин', 'wp-panda-vault') . '</option><option value="theme">' . esc_html__('Тема', 'wp-panda-vault') . '</option></select></p>';
         submit_button(__('Создать продукт', 'wp-panda-vault'));
         echo '</form></section></div>';
-        echo '<section class="wppv-card"><h2>' . esc_html__('Защита файлов', 'wp-panda-vault') . '</h2><p>' . esc_html(sprintf(__('Хранилище: %s', 'wp-panda-vault'), WP_Panda_Vault::storage_path())) . '</p><p class="wppv-muted">' . esc_html__('Каталог расположен вне ABSPATH. API-ключи хранятся только в виде SHA-256-хеша; оригинальный ключ показывается один раз после создания или ротации.', 'wp-panda-vault') . '</p></section>';
+        echo '<section class="wppv-card"><h2>' . esc_html__('Защита файлов', 'wp-panda-vault') . '</h2><p>' . esc_html(sprintf(__('Хранилище: %s', 'wp-panda-vault'), WP_Panda_Vault::storage_path())) . '</p><p class="wppv-muted">' . esc_html__('Каталог расположен вне web-root и ABSPATH. Хеши индивидуальных лицензий хранятся в базе; исходные ключи показываются только один раз при выпуске.', 'wp-panda-vault') . '</p></section>';
     }
 
     private function render_product($product) {
@@ -124,22 +128,16 @@ final class WP_Panda_Vault_Admin {
         $latest = WP_Panda_Vault::latest_release($product->id);
         echo '<p><a href="' . esc_url($back) . '">← ' . esc_html__('К списку продуктов', 'wp-panda-vault') . '</a></p>';
         echo '<h2>' . esc_html($product->name) . ' <code>' . esc_html($product->slug) . '</code> <span class="wppv-badge">' . esc_html($product->type) . '</span></h2>';
-        echo '<div class="wppv-actions">';
-        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wppv-inline">';
-        wp_nonce_field('wppv_rotate_' . $product->id);
-        echo '<input type="hidden" name="action" value="wp_panda_vault_rotate"><input type="hidden" name="product_id" value="' . esc_attr($product->id) . '">';
-        submit_button(__('Сменить API-ключ', 'wp-panda-vault'), 'secondary', 'submit', false, array('onclick' => "return confirm('Старый ключ сразу перестанет работать. Продолжить?')"));
-        echo '</form><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wppv-inline">';
+        echo '<div class="wppv-actions"><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('wppv_delete_' . $product->id);
         echo '<input type="hidden" name="action" value="wp_panda_vault_delete"><input type="hidden" name="product_id" value="' . esc_attr($product->id) . '">';
-        submit_button(__('Удалить продукт', 'wp-panda-vault'), 'delete', 'submit', false, array('onclick' => "return confirm('Удалить продукт и все ZIP-релизы без возможности восстановления?')"));
+        submit_button(__('Удалить продукт', 'wp-panda-vault'), 'delete', 'submit', false, array('onclick' => "return confirm('Удалить продукт, лицензии и все ZIP-релизы без возможности восстановления?')"));
         echo '</form></div>';
-        echo '<section class="wppv-card"><h2>' . esc_html__('Интеграция обновлений', 'wp-panda-vault') . '</h2><p>' . esc_html__('Добавьте SDK wp-panda-updater.php в поставляемый пакет. Храните API-ключ в wp-config.php у сайтов, которые имеют право получать обновления.', 'wp-panda-vault') . '</p>';
-        $constant = 'WP_PANDA_' . strtoupper(preg_replace('/[^A-Z0-9]+/i', '_', $product->slug)) . '_KEY';
-        $snippet = "require_once __DIR__ . '/wp-panda-updater.php';\nnew WP_Panda_Updater(array(\n    'type' => '" . $product->type . "',\n    'slug' => '" . $product->slug . "',\n    'version' => '1.0.0', // синхронизировать с версией плагина/темы\n    'api_key_constant' => '" . $constant . "',\n    'api_url' => '" . rest_url('wp-panda/v1/check') . "',\n));";
+        echo '<section class="wppv-card"><h2>' . esc_html__('Интеграция обновлений', 'wp-panda-vault') . '</h2><p>' . esc_html__('Добавьте SDK wp-panda-updater.php в пакет. На каждом сайте пользователь активирует индивидуальный ключ через Настройки → Panda Updates.', 'wp-panda-vault') . '</p>';
+        $snippet = "require_once __DIR__ . '/wp-panda-updater.php';\nnew WP_Panda_Updater(array(\n    'type' => " . var_export($product->type, true) . ",\n    'slug' => " . var_export($product->slug, true) . ",\n    'name' => " . var_export($product->name, true) . ",\n    'version' => '1.0.0', // синхронизировать с заголовком продукта\n    'api_url' => " . var_export(rest_url('wp-panda/v1'), true) . ",\n));";
         echo '<pre class="wppv-code">' . esc_html($snippet) . '</pre>';
-        echo '<p>' . esc_html__('Добавьте ключ, показанный при создании/ротации, в wp-config.php:', 'wp-panda-vault') . '</p><pre class="wppv-code">' . esc_html("define('{$constant}', 'wppv_КЛЮЧ_ИЗ_ПАНЕЛИ');") . '</pre>';
-        echo '<p class="description">' . esc_html__('Сервер обновлений должен использовать HTTPS. Первая версия с интегрированным SDK устанавливается на сайт обычным способом; далее обновления появятся в стандартной панели WordPress.', 'wp-panda-vault') . '</p></section>';
+        echo '<p class="description">' . esc_html__('Не встраивайте клиентский лицензионный ключ в публичный код. Первая сборка с SDK устанавливается обычным способом; пользователь вводит ключ в админке каждого сайта.', 'wp-panda-vault') . '</p></section>';
+        $this->render_licenses($product);
         echo '<div class="wppv-grid"><section class="wppv-card"><h2>' . esc_html__('Релизы', 'wp-panda-vault') . '</h2>';
         if (!$releases) echo '<p>' . esc_html__('Опубликованных релизов пока нет.', 'wp-panda-vault') . '</p>';
         else {
@@ -172,19 +170,16 @@ final class WP_Panda_Vault_Admin {
         if (strlen($name) < 2 || !preg_match('/^[a-z0-9][a-z0-9_-]{1,59}$/', $slug) || !in_array($type, array('plugin', 'theme'), true)) {
             $this->redirect_error(__('Проверьте название, slug и тип продукта.', 'wp-panda-vault'));
         }
-        $key = WP_Panda_Vault::create_api_key();
-        if (is_wp_error($key)) $this->redirect_error($key->get_error_message());
         $result = $wpdb->insert(WP_Panda_Vault::products_table(), array(
             'name' => $name,
             'slug' => $slug,
             'type' => $type,
-            'api_key_hash' => hash('sha256', $key),
+            'api_key_hash' => '', // Retained for backward-compatible schema upgrades; licenses authorize clients.
             'status' => 'active',
             'created_at' => current_time('mysql', true),
         ), array('%s', '%s', '%s', '%s', '%s', '%s'));
         if (!$result) $this->redirect_error(__('Не удалось создать продукт. Такой slug/type уже может существовать.', 'wp-panda-vault'));
         $id = (int) $wpdb->insert_id;
-        set_transient('wppv_key_' . get_current_user_id(), array('key' => $key, 'product_id' => $id), 5 * MINUTE_IN_SECONDS);
         wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $id, 'notice' => 'created'), admin_url('admin.php')));
         exit;
     }
@@ -312,19 +307,93 @@ final class WP_Panda_Vault_Admin {
         return preg_match('/^\d+(\.\d+){0,3}$/', $value) ? $value : $fallback;
     }
 
-    public function rotate_key() {
-        $this->authorize_admin();
-        $id = absint($_POST['product_id'] ?? 0);
-        check_admin_referer('wppv_rotate_' . $id);
+    private function render_licenses($product) {
         global $wpdb;
-        $product = WP_Panda_Vault::get_product($id);
+        $licenses = WP_Panda_Vault::get_licenses($product->id);
+        $activations_table = WP_Panda_Vault::activations_table();
+        echo '<section class="wppv-card"><h2>' . esc_html__('Лицензии и активации сайтов', 'wp-panda-vault') . '</h2>';
+        echo '<p>' . esc_html__('Создайте индивидуальный ключ и установите лимит на 1, 3 или 5 сайтов. Сайт занимает слот после активации ключа в своей админке.', 'wp-panda-vault') . '</p>';
+        echo '<form class="wppv-actions" method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        wp_nonce_field('wppv_create_license_' . $product->id);
+        echo '<input type="hidden" name="action" value="wp_panda_vault_create_license"><input type="hidden" name="product_id" value="' . esc_attr($product->id) . '">';
+        echo '<label>' . esc_html__('Метка/клиент', 'wp-panda-vault') . ' <input name="label" class="regular-text" maxlength="191" placeholder="Клиент или заказ"></label> ';
+        echo '<label>' . esc_html__('Лимит сайтов', 'wp-panda-vault') . ' <select name="max_activations"><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label> ';
+        submit_button(__('Выпустить лицензию', 'wp-panda-vault'), 'primary', 'submit', false);
+        echo '</form>';
+        if (!$licenses) {
+            echo '<p>' . esc_html__('Лицензий пока нет.', 'wp-panda-vault') . '</p></section>';
+            return;
+        }
+        echo '<table class="widefat striped" style="margin-top:18px"><thead><tr><th>' . esc_html__('Метка', 'wp-panda-vault') . '</th><th>' . esc_html__('Активации', 'wp-panda-vault') . '</th><th>' . esc_html__('Статус', 'wp-panda-vault') . '</th><th>' . esc_html__('Создана', 'wp-panda-vault') . '</th><th>' . esc_html__('Действие', 'wp-panda-vault') . '</th></tr></thead><tbody>';
+        foreach ($licenses as $license) {
+            $sites = (array) $wpdb->get_results($wpdb->prepare("SELECT * FROM {$activations_table} WHERE license_id = %d ORDER BY activated_at ASC", $license->id));
+            echo '<tr><td><strong>' . esc_html($license->label ?: __('Без метки', 'wp-panda-vault')) . '</strong></td><td>' . esc_html(count($sites) . ' / ' . (int) $license->max_activations) . '</td><td>' . esc_html($license->status === 'active' ? __('Активна', 'wp-panda-vault') : __('Отозвана', 'wp-panda-vault')) . '</td><td>' . esc_html(get_date_from_gmt($license->created_at, 'Y-m-d')) . '</td><td>';
+            if ($license->status === 'active') {
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+                wp_nonce_field('wppv_revoke_license_' . $license->id);
+                echo '<input type="hidden" name="action" value="wp_panda_vault_revoke_license"><input type="hidden" name="product_id" value="' . esc_attr($product->id) . '"><input type="hidden" name="license_id" value="' . esc_attr($license->id) . '">';
+                submit_button(__('Отозвать', 'wp-panda-vault'), 'delete', 'submit', false, array('onclick' => "return confirm('Лицензия перестанет работать на всех сайтах. Продолжить?')"));
+                echo '</form>';
+            }
+            echo '</td></tr>';
+            foreach ($sites as $site) {
+                echo '<tr><td colspan="2">↳ <code>' . esc_html($site->site_url) . '</code></td><td colspan="2"><span class="description">' . esc_html(sprintf(__('Активирован: %1$s · последняя проверка: %2$s UTC', 'wp-panda-vault'), $site->activated_at, $site->last_seen_at)) . '</span></td><td><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+                wp_nonce_field('wppv_remove_activation_' . $site->id);
+                echo '<input type="hidden" name="action" value="wp_panda_vault_remove_activation"><input type="hidden" name="product_id" value="' . esc_attr($product->id) . '"><input type="hidden" name="license_id" value="' . esc_attr($license->id) . '"><input type="hidden" name="activation_id" value="' . esc_attr($site->id) . '">';
+                submit_button(__('Освободить слот', 'wp-panda-vault'), 'secondary', 'submit', false, array('onclick' => "return confirm('Деактивировать этот сайт и освободить место?')"));
+                echo '</form></td></tr>';
+            }
+        }
+        echo '</tbody></table><p class="description">' . esc_html__('Если клиент переехал или потерял доступ к сайту, удалите его активацию здесь. Отозванные лицензии не принимают новые активации.', 'wp-panda-vault') . '</p></section>';
+    }
+
+    public function create_license() {
+        $this->authorize_admin();
+        $product_id = absint($_POST['product_id'] ?? 0);
+        check_admin_referer('wppv_create_license_' . $product_id);
+        $product = WP_Panda_Vault::get_product($product_id);
         if (!$product) $this->redirect_error(__('Продукт не найден.', 'wp-panda-vault'));
-        $key = WP_Panda_Vault::create_api_key();
-        if (is_wp_error($key)) $this->redirect_error($key->get_error_message(), $id);
-        $updated = $wpdb->update(WP_Panda_Vault::products_table(), array('api_key_hash' => hash('sha256', $key)), array('id' => $id), array('%s'), array('%d'));
-        if ($updated === false) $this->redirect_error(__('Не удалось обновить ключ продукта в базе данных.', 'wp-panda-vault'), $id);
-        set_transient('wppv_key_' . get_current_user_id(), array('key' => $key, 'product_id' => $id), 5 * MINUTE_IN_SECONDS);
-        wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $id, 'notice' => 'rotated'), admin_url('admin.php')));
+        $limit = absint($_POST['max_activations'] ?? 1);
+        if (!in_array($limit, array(1, 3, 5), true)) $limit = 1;
+        $label = sanitize_text_field(wp_unslash($_POST['label'] ?? ''));
+        $key = WP_Panda_Vault::create_license_key();
+        if (is_wp_error($key)) $this->redirect_error($key->get_error_message(), $product_id);
+        global $wpdb;
+        $saved = $wpdb->insert(WP_Panda_Vault::licenses_table(), array(
+            'product_id' => $product_id,
+            'license_key_hash' => hash('sha256', WP_Panda_Vault::normalize_license_key($key)),
+            'label' => $label,
+            'max_activations' => $limit,
+            'status' => 'active',
+            'created_at' => current_time('mysql', true),
+        ), array('%d', '%s', '%s', '%d', '%s', '%s'));
+        if (!$saved) $this->redirect_error(__('Не удалось сохранить лицензию в базе данных.', 'wp-panda-vault'), $product_id);
+        set_transient('wppv_license_' . get_current_user_id(), array('key' => $key, 'product_id' => $product_id), 5 * MINUTE_IN_SECONDS);
+        wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $product_id, 'notice' => 'license_created'), admin_url('admin.php')));
+        exit;
+    }
+
+    public function revoke_license() {
+        $this->authorize_admin();
+        $product_id = absint($_POST['product_id'] ?? 0);
+        $license_id = absint($_POST['license_id'] ?? 0);
+        check_admin_referer('wppv_revoke_license_' . $license_id);
+        global $wpdb;
+        $updated = $wpdb->update(WP_Panda_Vault::licenses_table(), array('status' => 'revoked'), array('id' => $license_id, 'product_id' => $product_id), array('%s'), array('%d', '%d'));
+        if ($updated === false) $this->redirect_error(__('Не удалось отозвать лицензию.', 'wp-panda-vault'), $product_id);
+        wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $product_id, 'notice' => 'license_revoked'), admin_url('admin.php')));
+        exit;
+    }
+
+    public function remove_activation() {
+        $this->authorize_admin();
+        $product_id = absint($_POST['product_id'] ?? 0);
+        $license_id = absint($_POST['license_id'] ?? 0);
+        $activation_id = absint($_POST['activation_id'] ?? 0);
+        check_admin_referer('wppv_remove_activation_' . $activation_id);
+        global $wpdb;
+        $wpdb->delete(WP_Panda_Vault::activations_table(), array('id' => $activation_id, 'license_id' => $license_id), array('%d', '%d'));
+        wp_safe_redirect(add_query_arg(array('page' => 'wp-panda-vault', 'product_id' => $product_id, 'notice' => 'activation_removed'), admin_url('admin.php')));
         exit;
     }
 
@@ -336,6 +405,11 @@ final class WP_Panda_Vault_Admin {
         $product = WP_Panda_Vault::get_product($id);
         if (!$product) $this->redirect_error(__('Продукт не найден.', 'wp-panda-vault'));
         $releases = WP_Panda_Vault::get_releases($id);
+        $licenses = WP_Panda_Vault::get_licenses($id);
+        foreach ($licenses as $license) {
+            $wpdb->delete(WP_Panda_Vault::activations_table(), array('license_id' => $license->id), array('%d'));
+        }
+        $wpdb->delete(WP_Panda_Vault::licenses_table(), array('product_id' => $id), array('%d'));
         $deleted_releases = $wpdb->delete(WP_Panda_Vault::releases_table(), array('product_id' => $id), array('%d'));
         $deleted_product = $wpdb->delete(WP_Panda_Vault::products_table(), array('id' => $id), array('%d'));
         if ($deleted_releases === false || $deleted_product === false) $this->redirect_error(__('Database error while deleting product; package files were retained.', 'wp-panda-vault'));
