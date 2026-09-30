@@ -1,4 +1,5 @@
-data/
 .env
+/vendor/
+/wp-panda-vault-private/
 *.log
 .DS_Store
